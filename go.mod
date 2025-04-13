@@ -5,6 +5,7 @@ go 1.23.6
 require (
 	github.com/dgraph-io/ristretto v1.0.0
 	github.com/gobuffalo/pop/v6 v6.1.1
+	github.com/hashicorp/go-retryablehttp v0.7.2
 	github.com/knadh/koanf/parsers/json v0.1.0
 	github.com/knadh/koanf/providers/rawbytes v0.1.0
 	github.com/knadh/koanf/v2 v2.1.2
@@ -15,11 +16,13 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cast v1.7.1
 	github.com/spf13/cobra v1.9.1
+	github.com/spf13/pflag v1.0.6
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/sjson v1.2.5
 	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.60.0
 	go.opentelemetry.io/otel v1.35.0
 	go.opentelemetry.io/otel/trace v1.35.0
+	golang.org/x/sync v0.10.0
 )
 
 require (
@@ -32,6 +35,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jandelgado/gcov2lcov v1.0.5 // indirect
@@ -51,7 +55,6 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/spf13/afero v1.9.5 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/spf13/viper v1.14.0 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
 	github.com/tidwall/gjson v1.14.2 // indirect
