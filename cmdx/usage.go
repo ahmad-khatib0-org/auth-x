@@ -1,122 +1,108 @@
 package cmdx
 
 import (
-	"crypto/tls"
-	"fmt"
-	"net/http"
-	"net/url"
-	"os"
-	"strings"
-	"time"
+	"bytes"
+	"text/template"
 
-	"github.com/ahmad-khatib0-org/auth-x/httpx"
-	"github.com/hashicorp/go-retryablehttp"
-	"github.com/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
+
+var usageTemplateFuncs = template.FuncMap{}
+
+// AddUsageTemplateFunc adds a template function to the usage template.
+func AddUsageTemplateFunc(name string, f any) {
+	usageTemplateFuncs[name] = f
+}
 
 const (
-	envKeyEndpoint    = "ORY_SDK_URL"
-	FlagEndpoint      = "endpoint"
-	FlagSkipTLSVerify = "skip-tls-verify"
-	FlagHeaders       = "http-header"
+	helpTemplate = `{{insertTemplate . (or .Long .Short) | trimTrailingWhitespaces}}
+
+{{if or .Runnable .HasSubCommands}}{{.UsageString}}{{end}}`
+	usageTemplate = `Usage:{{if .Runnable}}
+  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
+  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
+
+Aliases:
+  {{.NameAndAliases}}{{end}}{{if .HasExample}}
+
+Examples:
+{{insertTemplate . .Example}}{{end}}{{if .HasAvailableSubCommands}}
+
+Available Commands:{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+
+Flags:
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+
+Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
+
+Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
+  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+
+Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
+`
 )
 
-// Remote returns the remote endpoint for the given command.
-func Remote(cmd *cobra.Command) (string, error) {
-	endpoint, err := cmd.Flags().GetString(FlagEndpoint)
-	if err != nil {
-		return "", errors.WithStack(err)
+// EnableUsageTemplating enables gotemplates for usage strings, i.e. cmd.Short, cmd.Long, and cmd.Example.
+// The data for the template is the command itself. Especially useful are `.Root.Name` and `.CommandPath`.
+// This will be inherited by all subcommands, so enabling it on the root command is sufficient.
+func EnableUsageTemplating(cmds ...*cobra.Command) {
+	cobra.AddTemplateFunc("insertTemplate", TemplateCommandField)
+	for _, cmd := range cmds {
+		cmd.SetHelpTemplate(helpTemplate)
+		cmd.SetUsageTemplate(usageTemplate)
 	}
-
-	if endpoint != "" {
-		return strings.TrimRight(endpoint, "/"), nil
-	} else if endpoint := os.Getenv("ORY_SDK_URL"); endpoint != "" {
-		return strings.TrimRight(endpoint, "/"), nil
-	}
-
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "To execute this command, the endpoint URL must point to the URL where Ory is located. To set the endpoint URL, use flag `--endpoint` or environment variable `ORY_SDK_URL`.")
-	return "", FailSilently(cmd)
 }
 
-// RemoteURI returns the remote URI for the given command.
-func RemoteURI(cmd *cobra.Command) (*url.URL, error) {
-	remote, err := Remote(cmd)
+func TemplateCommandField(cmd *cobra.Command, field string) (string, error) {
+	t := template.New("")
+	t.Funcs(usageTemplateFuncs)
+	t, err := t.Parse(field)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-
-	endpoint, err := url.ParseRequestURI(remote)
-	if err != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Could not parse endpoint URL: %s", err)
-		return nil, err
+	var out bytes.Buffer
+	if err := t.Execute(&out, cmd); err != nil {
+		return "", err
 	}
-
-	return endpoint, nil
+	return out.String(), nil
 }
 
-// NewClient creates a new HTTP client.
-func NewClient(cmd *cobra.Command) (*http.Client, *url.URL, error) {
-	endpoint, err := cmd.Flags().GetString(FlagEndpoint)
-	if err != nil {
-		return nil, nil, errors.WithStack(err)
+// DisableUsageTemplating resets the commands usage template to the default.
+// This can be used to undo the effects of EnableUsageTemplating, specifically for a subcommand.
+func DisableUsageTemplating(cmds ...*cobra.Command) {
+	defaultCmd := new(cobra.Command)
+	for _, cmd := range cmds {
+		cmd.SetHelpTemplate(defaultCmd.HelpTemplate())
+		cmd.SetUsageTemplate(defaultCmd.UsageTemplate())
 	}
-
-	if endpoint == "" {
-		endpoint = os.Getenv(envKeyEndpoint)
-	}
-
-	if endpoint == "" {
-		return nil, nil, errors.Errorf("you have to set the remote endpoint, try --help for details")
-	}
-
-	u, err := url.Parse(strings.TrimRight(endpoint, "/"))
-	if err != nil {
-		return nil, nil, errors.Wrapf(err, `could not parse the endpoint URL "%s"`, endpoint)
-	}
-
-	hc := retryablehttp.NewClient().StandardClient()
-	hc.Timeout = time.Second * 10
-
-	rawHeaders, err := cmd.Flags().GetStringSlice(FlagHeaders)
-	if err != nil {
-		return nil, nil, errors.WithStack(err)
-	}
-
-	header := http.Header{}
-	for _, h := range rawHeaders {
-		parts := strings.Split(h, ":")
-		if len(parts) != 2 {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Unable to parse `--http-header` flag. Format of flag value is a `: ` delimited string like `--http-header 'Some-Header: some-values; other values`. Received: %v", rawHeaders)
-			return nil, nil, FailSilently(cmd)
-		}
-
-		for k := range parts {
-			parts[k] = strings.TrimSpace(parts[k])
-		}
-
-		header.Add(parts[0], parts[1])
-	}
-
-	skipVerify, err := cmd.Flags().GetBool(FlagSkipTLSVerify)
-	if err != nil {
-		return nil, nil, errors.WithStack(err)
-	}
-
-	rt := httpx.NewTransportWithHeader(header)
-	rt.RoundTripper = &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: skipVerify, //nolint:gosec // This is a false positive
-		},
-	}
-	hc.Transport = rt
-	return hc, u, nil
 }
 
-// RegisterHTTPClientFlags registers HTTP client configuration flags.
-func RegisterHTTPClientFlags(flags *pflag.FlagSet) {
-	flags.StringP(FlagEndpoint, FlagEndpoint[:1], "", fmt.Sprintf("The API URL this command should target. Alternatively set using the %s environmental variable.", envKeyEndpoint))
-	flags.Bool(FlagSkipTLSVerify, false, "Do not verify TLS certificates. Useful when dealing with self-signed certificates. Do not use in production!")
-	flags.StringSliceP(FlagHeaders, "H", []string{}, "A list of additional HTTP headers to set. HTTP headers is separated by a `: `, for example: `-H 'Authorization: bearer some-token'`.")
+// AssertUsageTemplates asserts that the usage string of the commands are properly templated.
+func AssertUsageTemplates(t require.TestingT, cmd *cobra.Command) {
+	var usage, help string
+	require.NotPanics(t, func() {
+		usage = cmd.UsageString()
+
+		out, err := cmd.OutOrStdout(), cmd.ErrOrStderr()
+		bb := new(bytes.Buffer)
+
+		cmd.SetOut(bb)
+		cmd.SetErr(bb)
+		require.NoError(t, cmd.Help())
+		help = bb.String()
+
+		cmd.SetOut(out)
+		cmd.SetErr(err)
+	})
+
+	assert.NotContains(t, usage, "{{")
+	assert.NotContains(t, help, "{{")
+	for _, child := range cmd.Commands() {
+		AssertUsageTemplates(t, child)
+	}
 }
