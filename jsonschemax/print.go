@@ -1,6 +1,45 @@
 package jsonschemax
 
-import "github.com/ory/jsonschema/v3"
+import (
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/ory/jsonschema/v3"
+	"github.com/pkg/errors"
+	"github.com/tidwall/gjson"
+)
+
+func FormatValidationErrorForCLI(w io.Writer, conf []byte, err error) {
+	if err == nil {
+		return
+	}
+
+	if e := new(jsonschema.ValidationError); errors.As(err, &e) {
+		_, _ = fmt.Fprintln(w, "The configuration contains values or keys which are invalid:")
+		pointer, validation := FormatError(e)
+
+		if pointer == "#" {
+			if len(e.Causes) == 0 {
+				_, _ = fmt.Fprintln(w, "(root)")
+				_, _ = fmt.Fprintln(w, "^-- "+validation)
+				_, _ = fmt.Fprintln(w, "")
+			}
+		} else {
+			spaces := make([]string, len(pointer)+3)
+			_, _ = fmt.Fprintf(w, "%s: %+v", pointer, gjson.GetBytes(conf, pointer).Value())
+			_, _ = fmt.Fprintln(w, "")
+			_, _ = fmt.Fprintf(w, "%s^-- %s", strings.Join(spaces, " "), validation)
+			_, _ = fmt.Fprintln(w, "")
+			_, _ = fmt.Fprintln(w, "")
+		}
+
+		for _, cause := range e.Causes {
+			FormatValidationErrorForCLI(w, conf, cause)
+		}
+		return
+	}
+}
 
 func FormatError(e *jsonschema.ValidationError) (string, string) {
 	var (
